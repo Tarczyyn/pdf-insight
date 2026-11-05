@@ -71,10 +71,20 @@ function toBase64Jpeg(canvas: HTMLCanvasElement): string {
   return dataUrl.slice(dataUrl.indexOf(',') + 1)
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Odczyt PDF przerwany.', 'AbortError')
+  }
+}
+
 export async function extractPdf(
   file: File,
   onProgress?: (page: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<ExtractedPdf> {
+  throwIfAborted(signal)
   const data = new Uint8Array(await file.arrayBuffer())
 
   const loadingTask = getDocument({ data })
@@ -104,6 +114,8 @@ export async function extractPdf(
 
   try {
     for (let n = 1; n <= pdf.numPages; n++) {
+      // Po „Anuluj” nie renderujemy kolejnych stron; pętla kończy się na granicy strony.
+      throwIfAborted(signal)
       onProgress?.(n, pdf.numPages)
       const page = await pdf.getPage(n)
       const viewport = page.getViewport({ scale: RENDER_SCALE })

@@ -36,6 +36,8 @@ export function loadHistory(store: KeyValueStore | null = defaultStore()): Histo
       const e = entry as Partial<HistoryEntry>
       const parsed = analysisResultSchema.safeParse(e.result)
       if (!parsed.success || typeof e.id !== 'string' || typeof e.savedAt !== 'string') return []
+      // Niepoprawna data wywaliłaby Intl.DateTimeFormat przy renderowaniu listy.
+      if (Number.isNaN(Date.parse(e.savedAt))) return []
       return [
         {
           id: e.id,

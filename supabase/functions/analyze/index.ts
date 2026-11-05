@@ -31,10 +31,20 @@ const AI_TIMEOUT_MS = 25_000
 // Łączny budżet na analizę (wszystkie modele i ponowna próba), żeby użytkownik nie czekał minutami.
 const TOTAL_BUDGET_MS = 55_000
 const MIN_ATTEMPT_MS = 5_000
+// Okna per IP (minute, day) i jedno wspólne dla całego demo (global), żeby pula adresów
+// nie mogła wyczerpać dziennego limitu darmowego planu Gemini.
 const RATE_LIMITS = [
-  { name: 'minute', limit: 6, windowSeconds: 60 },
-  { name: 'day', limit: 60, windowSeconds: 86_400 },
-]
+  { name: 'minute', limit: 6, windowSeconds: 60, perIp: true },
+  { name: 'day', limit: 60, windowSeconds: 86_400, perIp: true },
+  { name: 'global', limit: 300, windowSeconds: 86_400, perIp: false },
+] as const
+type RateLimitRule = (typeof RATE_LIMITS)[number]
+
+const RATE_LIMIT_MESSAGES: Record<RateLimitRule['name'], string> = {
+  minute: 'Za dużo analiz w krótkim czasie. Spróbuj ponownie za minutę.',
+  day: 'Wykorzystano dzienny limit analiz dla tego adresu. Spróbuj jutro.',
+  global: 'Wykorzystano dzienny limit analiz tego demo. Spróbuj jutro.',
+}
 
 const env = (name: string): string | undefined => Deno.env.get(name)?.trim() || undefined
 
@@ -90,7 +100,8 @@ async function sha256(text: string): Promise<string> {
 }
 
 /**
- * Limit żądań per IP w Postgresie (funkcja check_rate_limit z migracji). IP jest hashowane.
+ * Limit żądań w Postgresie (funkcja check_rate_limit z migracji). IP jest hashowane.
+ * Okna są sprawdzane równolegle, żeby nie sumować opóźnień bazy.
  * Gdy baza nie odpowiada, żądanie przechodzi (fail-open): awaria limitera nie może wyłączyć demo.
  */
 async function enforceRateLimit(req: Request): Promise<void> {
@@ -102,7 +113,8 @@ async function enforceRateLimit(req: Request): Promise<void> {
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     'unknown'
   const ipHash = await sha256(`pdf-insight:${ip}`)
-  for (const rule of RATE_LIMITS) {
+
+  const checkRule = async (rule: RateLimitRule): Promise<boolean> => {
     try {
       const res = await fetch(`${url}/rest/v1/rpc/check_rate_limit`, {
         method: 'POST',
@@ -112,31 +124,26 @@ async function enforceRateLimit(req: Request): Promise<void> {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          p_key: `${rule.name}:${ipHash}`,
+          p_key: rule.perIp ? `${rule.name}:${ipHash}` : `${rule.name}:all`,
           p_limit: rule.limit,
           p_window_seconds: rule.windowSeconds,
         }),
         signal: AbortSignal.timeout(3_000),
       })
       if (!res.ok) {
-        console.error('rate limit rpc failed', res.status)
-        return
+        console.error('rate limit rpc failed', rule.name, res.status)
+        return true
       }
-      if ((await res.json()) === false) {
-        throw new HttpError(
-          429,
-          'rate_limited',
-          rule.name === 'minute'
-            ? 'Za dużo analiz w krótkim czasie. Spróbuj ponownie za minutę.'
-            : 'Wykorzystano dzienny limit analiz dla tego adresu. Spróbuj jutro.',
-        )
-      }
+      return (await res.json()) !== false
     } catch (e) {
-      if (e instanceof HttpError) throw e
-      console.error('rate limit unavailable', e)
-      return
+      console.error('rate limit unavailable', rule.name, e)
+      return true
     }
   }
+
+  const results = await Promise.all(RATE_LIMITS.map(checkRule))
+  const exceeded = RATE_LIMITS.find((_, i) => results[i] === false)
+  if (exceeded) throw new HttpError(429, 'rate_limited', RATE_LIMIT_MESSAGES[exceeded.name])
 }
 
 interface GeminiPart {
@@ -209,30 +216,14 @@ async function callGemini(
       attempts.push(`${model} network`)
       continue
     }
-    if (res.status === 429 || res.status >= 500 || res.status === 404) {
+    if (!res.ok) {
+      // Każdy błąd HTTP (limit, przeciążenie, brak modelu, odrzucony parametr) oznacza próbę
+      // z kolejnym modelem; błąd dla użytkownika powstaje dopiero po wyczerpaniu listy.
       const errorText = await res.text()
-      console.error('gemini unavailable, trying next model', model, res.status, errorText)
+      console.error('gemini error, trying next model', model, res.status, errorText)
       lastStatus = res.status
       attempts.push(`${model} ${res.status} ${providerMessage(errorText)}`.trim())
       continue
-    }
-    if (!res.ok) {
-      const errorText = await res.text()
-      console.error('gemini error', model, res.status, errorText)
-      let providerStatus = ''
-      try {
-        providerStatus = String(
-          (JSON.parse(errorText) as { error?: { status?: string } }).error?.status ?? '',
-        )
-      } catch {
-        providerStatus = ''
-      }
-      throw new HttpError(
-        502,
-        'ai_unavailable',
-        'Usługa AI odrzuciła żądanie. Spróbuj ponownie.',
-        `gemini ${res.status}${providerStatus ? ` ${providerStatus}` : ''}`,
-      )
     }
     const body = (await res.json()) as GeminiResponse
     if (body.promptFeedback?.blockReason) {
@@ -244,21 +235,31 @@ async function callGemini(
       .join('')
     return { text, model }
   }
+  const detail = attempts.join(', ')
   if (lastStatus === 504) {
+    throw new HttpError(504, 'timeout', 'Analiza trwała zbyt długo. Spróbuj ponownie.', detail)
+  }
+  if (lastStatus === 429) {
     throw new HttpError(
-      504,
-      'timeout',
-      'Analiza trwała zbyt długo. Spróbuj ponownie.',
-      attempts.join(', '),
+      429,
+      'rate_limited',
+      'Wyczerpano limit darmowego API AI. Spróbuj ponownie za kilka minut.',
+      detail,
+    )
+  }
+  if (lastStatus >= 400 && lastStatus < 500) {
+    throw new HttpError(
+      502,
+      'ai_unavailable',
+      'Usługa AI odrzuciła żądanie. Spróbuj ponownie.',
+      detail,
     )
   }
   throw new HttpError(
-    lastStatus === 429 ? 429 : 503,
-    lastStatus === 429 ? 'rate_limited' : 'ai_unavailable',
-    lastStatus === 429
-      ? 'Wyczerpano limit darmowego API AI. Spróbuj ponownie za kilka minut.'
-      : 'Usługa AI jest chwilowo niedostępna. Spróbuj ponownie.',
-    attempts.join(', '),
+    503,
+    'ai_unavailable',
+    'Usługa AI jest chwilowo niedostępna. Spróbuj ponownie.',
+    detail,
   )
 }
 
@@ -399,8 +400,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    await enforceRateLimit(req)
+    // Najpierw walidacja, potem limit: błędne żądanie nie zużywa puli użytkownika.
     const input = await readRequest(req)
+    await enforceRateLimit(req)
     const { data, model } = await analyzeWithRetry(input)
     return json(buildResult(input, data, model), 200, origin)
   } catch (e) {

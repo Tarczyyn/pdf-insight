@@ -31,10 +31,13 @@ export async function analyzeFile(
   try {
     // pdf.js (~0,5 MB) ładowany dopiero przy pierwszym pliku, żeby strona startowa była lekka.
     const { extractPdf } = await import('./extractPdf.ts')
-    extracted = await extractPdf(file, (page, total) =>
-      onProgress({ stage: 'reading', page, total }),
+    extracted = await extractPdf(
+      file,
+      (page, total) => onProgress({ stage: 'reading', page, total }),
+      signal,
     )
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
     if (error instanceof PdfReadError) throw new AnalysisError(error.userMessage, false, error)
     throw new AnalysisError('Nie udało się odczytać pliku PDF.', false, error)
   }
