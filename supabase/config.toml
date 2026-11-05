@@ -1,0 +1,6 @@
+project_id = "pdf-insight"
+
+[functions.analyze]
+# Frontend nie wysyła klucza anon (w kodzie frontu nie ma żadnego klucza).
+# Dostęp chronią: lista dozwolonych domen (CORS/Origin), limit żądań per IP i limit rozmiaru.
+verify_jwt = false
