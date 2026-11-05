@@ -63,8 +63,11 @@ export async function analyzeFile(
       `Na stronie ${h.page} wykryto tekst niewidoczny dla czytelnika (np. biały na białym tle). Pominięto go w analizie. Treść: „${shorten(h.text)}”`,
   )
   if (extracted.skippedScanPages.length > 0) {
+    const pages = extracted.skippedScanPages
     extraWarnings.push(
-      `Strony ${extracted.skippedScanPages.join(', ')} nie mają warstwy tekstowej i nie zostały odczytane (limit stron skanowanych).`,
+      pages.length === 1
+        ? `Strona ${pages[0]} nie ma warstwy tekstowej i nie została odczytana (limit stron skanowanych).`
+        : `Strony ${pages.join(', ')} nie mają warstwy tekstowej i nie zostały odczytane (limit stron skanowanych).`,
     )
   }
   if (extracted.uncheckedPages.length > 0) {

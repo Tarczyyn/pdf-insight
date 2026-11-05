@@ -265,7 +265,9 @@ function buildResult(req: AnalyzeRequest, ai: AiOutput, model: string): Analysis
   const warnings = [...ai.warnings]
   if (ocrPages.length > 0) {
     warnings.push(
-      `Strony ${ocrPages.join(', ')} nie mają warstwy tekstowej i zostały odczytane z obrazu. Dane z nich warto sprawdzić z oryginałem.`,
+      ocrPages.length === 1
+        ? `Strona ${ocrPages[0]} nie ma warstwy tekstowej i została odczytana z obrazu. Dane z niej warto porównać z oryginałem.`
+        : `Strony ${ocrPages.join(', ')} nie mają warstwy tekstowej i zostały odczytane z obrazu. Dane z nich warto porównać z oryginałem.`,
     )
   }
   const result: AnalysisResult = {

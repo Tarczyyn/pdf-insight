@@ -90,7 +90,7 @@ export function ResultView({ result, durationMs }: Props) {
         ) : (
           <>
             <div className="table-wrap" tabIndex={0} role="region" aria-labelledby="amounts-title">
-              <table>
+              <table className="stack-table">
                 <thead>
                   <tr>
                     <th scope="col" className="num">
@@ -112,7 +112,7 @@ export function ResultView({ result, durationMs }: Props) {
                         )}
                       </td>
                       <td>{a.currency}</td>
-                      <td>{a.context}</td>
+                      <td className="ctx">{a.context}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -136,7 +136,7 @@ export function ResultView({ result, durationMs }: Props) {
           <Empty />
         ) : (
           <div className="table-wrap" tabIndex={0} role="region" aria-labelledby="dates-title">
-            <table>
+            <table className="stack-table">
               <thead>
                 <tr>
                   <th scope="col">Data</th>
@@ -149,7 +149,7 @@ export function ResultView({ result, durationMs }: Props) {
                     <td className="nowrap">
                       <time dateTime={d.date}>{formatDate(d.date, lang)}</time>
                     </td>
-                    <td>{d.context}</td>
+                    <td className="ctx">{d.context}</td>
                   </tr>
                 ))}
               </tbody>

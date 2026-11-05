@@ -473,6 +473,38 @@ tbody tr:last-child td {
 .nowrap {
   white-space: nowrap;
 }
+/* Wąskie ekrany: wiersz tabeli jako karta (kwota i waluta w linii, kontekst pod spodem). */
+@media (max-width: 560px) {
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .stack-table tr {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .stack-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .stack-table td {
+    padding: 0;
+    border: 0;
+  }
+  .stack-table td.num {
+    text-align: left;
+    font-weight: 600;
+  }
+  .stack-table td.ctx {
+    grid-column: 1 / -1;
+    color: var(--muted);
+  }
+}
 .badge {
   display: inline-block;
   margin-left: 6px;
