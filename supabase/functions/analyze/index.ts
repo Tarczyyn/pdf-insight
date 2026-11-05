@@ -14,13 +14,23 @@ import { extractNumbers, isValueInText } from '../_shared/numbers.ts'
 import { buildDocumentText, RESPONSE_JSON_SCHEMA, SYSTEM_PROMPT } from './prompt.ts'
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
-const DEFAULT_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
+const DEFAULT_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
+]
 const DEFAULT_ORIGINS = [
   'https://tarczyyn.github.io',
   'http://localhost:5173',
   'http://localhost:4173',
 ]
-const AI_TIMEOUT_MS = 45_000
+// Na model; przy przekroczeniu funkcja próbuje kolejnego modelu z listy.
+const AI_TIMEOUT_MS = 25_000
+// Łączny budżet na analizę (wszystkie modele i ponowna próba), żeby użytkownik nie czekał minutami.
+const TOTAL_BUDGET_MS = 55_000
+const MIN_ATTEMPT_MS = 5_000
 const RATE_LIMITS = [
   { name: 'minute', limit: 6, windowSeconds: 60 },
   { name: 'day', limit: 60, windowSeconds: 86_400 },
@@ -42,6 +52,8 @@ class HttpError extends Error {
     readonly status: number,
     readonly code: ApiErrorCode,
     message: string,
+    /** Krótka, jawna informacja diagnostyczna (np. status błędu dostawcy AI), bez danych wrażliwych. */
+    readonly detail?: string,
   ) {
     super(message)
   }
@@ -66,7 +78,10 @@ function json(body: unknown, status: number, origin: string | null): Response {
 }
 
 function errorResponse(e: HttpError, origin: string | null): Response {
-  return json({ error: { code: e.code, message: e.message } }, e.status, origin)
+  const error = e.detail
+    ? { code: e.code, message: e.message, detail: e.detail }
+    : { code: e.code, message: e.message }
+  return json({ error }, e.status, origin)
 }
 
 async function sha256(text: string): Promise<string> {
@@ -137,13 +152,33 @@ interface GeminiResponse {
   promptFeedback?: { blockReason?: string }
 }
 
+/** Komunikat błędu dostawcy (np. "The model is overloaded"), skrócony; nie zawiera danych żądania. */
+function providerMessage(errorText: string): string {
+  try {
+    const body = JSON.parse(errorText) as { error?: { status?: string; message?: string } }
+    return [body.error?.status, body.error?.message?.slice(0, 160)].filter(Boolean).join(': ')
+  } catch {
+    return ''
+  }
+}
+
 /** Jedno wywołanie Gemini z przejściem na kolejny model przy limicie albo awarii dostawcy. */
-async function callGemini(parts: GeminiPart[]): Promise<{ text: string; model: string }> {
+async function callGemini(
+  parts: GeminiPart[],
+  deadline: number,
+): Promise<{ text: string; model: string }> {
   const apiKey = env('GEMINI_API_KEY')
   if (!apiKey) throw new HttpError(500, 'internal', 'Serwer nie ma skonfigurowanego klucza AI.')
 
   let lastStatus = 0
+  const attempts: string[] = []
   for (const model of models) {
+    const remaining = deadline - Date.now()
+    if (remaining < MIN_ATTEMPT_MS) {
+      attempts.push(`${model} skipped (budget)`)
+      lastStatus = lastStatus || 504
+      break
+    }
     let res: Response
     try {
       res = await fetch(`${GEMINI_URL}/${model}:generateContent`, {
@@ -156,26 +191,48 @@ async function callGemini(parts: GeminiPart[]): Promise<{ text: string; model: s
             temperature: 0.1,
             responseMimeType: 'application/json',
             responseJsonSchema: RESPONSE_JSON_SCHEMA,
+            // Ekstrakcja nie wymaga długiego rozumowania; niski poziom skraca czas odpowiedzi.
+            thinkingConfig: { thinkingLevel: env('GEMINI_THINKING_LEVEL') ?? 'low' },
           },
         }),
-        signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(AI_TIMEOUT_MS, remaining)),
       })
     } catch (e) {
       if (e instanceof DOMException && e.name === 'TimeoutError') {
-        throw new HttpError(504, 'timeout', 'Analiza trwała zbyt długo. Spróbuj ponownie.')
+        console.error('gemini timeout, trying next model', model)
+        lastStatus = 504
+        attempts.push(`${model} timeout`)
+        continue
       }
       console.error('gemini network error', model, e)
       lastStatus = 503
+      attempts.push(`${model} network`)
       continue
     }
     if (res.status === 429 || res.status >= 500 || res.status === 404) {
-      console.error('gemini unavailable, trying next model', model, res.status, await res.text())
+      const errorText = await res.text()
+      console.error('gemini unavailable, trying next model', model, res.status, errorText)
       lastStatus = res.status
+      attempts.push(`${model} ${res.status} ${providerMessage(errorText)}`.trim())
       continue
     }
     if (!res.ok) {
-      console.error('gemini error', model, res.status, await res.text())
-      throw new HttpError(502, 'ai_unavailable', 'Usługa AI odrzuciła żądanie. Spróbuj ponownie.')
+      const errorText = await res.text()
+      console.error('gemini error', model, res.status, errorText)
+      let providerStatus = ''
+      try {
+        providerStatus = String(
+          (JSON.parse(errorText) as { error?: { status?: string } }).error?.status ?? '',
+        )
+      } catch {
+        providerStatus = ''
+      }
+      throw new HttpError(
+        502,
+        'ai_unavailable',
+        'Usługa AI odrzuciła żądanie. Spróbuj ponownie.',
+        `gemini ${res.status}${providerStatus ? ` ${providerStatus}` : ''}`,
+      )
     }
     const body = (await res.json()) as GeminiResponse
     if (body.promptFeedback?.blockReason) {
@@ -187,12 +244,21 @@ async function callGemini(parts: GeminiPart[]): Promise<{ text: string; model: s
       .join('')
     return { text, model }
   }
+  if (lastStatus === 504) {
+    throw new HttpError(
+      504,
+      'timeout',
+      'Analiza trwała zbyt długo. Spróbuj ponownie.',
+      attempts.join(', '),
+    )
+  }
   throw new HttpError(
     lastStatus === 429 ? 429 : 503,
     lastStatus === 429 ? 'rate_limited' : 'ai_unavailable',
     lastStatus === 429
       ? 'Wyczerpano limit darmowego API AI. Spróbuj ponownie za kilka minut.'
       : 'Usługa AI jest chwilowo niedostępna. Spróbuj ponownie.',
+    attempts.join(', '),
   )
 }
 
@@ -222,7 +288,8 @@ async function analyzeWithRetry(req: AnalyzeRequest): Promise<{ data: AiOutput; 
     parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
   }
 
-  const first = await callGemini(parts)
+  const deadline = Date.now() + TOTAL_BUDGET_MS
+  const first = await callGemini(parts, deadline)
   const firstParsed = parseAiOutput(first.text)
   if (firstParsed.ok) return { data: firstParsed.data, model: first.model }
 
@@ -233,7 +300,7 @@ async function analyzeWithRetry(req: AnalyzeRequest): Promise<{ data: AiOutput; 
       text: `Your previous answer failed validation: ${firstParsed.problem}\nPrevious answer:\n${first.text.slice(0, 4000)}\nReturn the complete corrected JSON.`,
     },
   ]
-  const second = await callGemini(retryParts)
+  const second = await callGemini(retryParts, deadline)
   const secondParsed = parseAiOutput(second.text)
   if (secondParsed.ok) return { data: secondParsed.data, model: second.model }
 
