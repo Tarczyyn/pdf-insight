@@ -1,14 +1,19 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AnalysisResult } from '@shared/schema.ts'
 import {
   DOCUMENT_TYPE_LABELS,
   downloadJson,
-  formatAmount,
   formatDate,
   formatSeconds,
+  languageName,
+  plural,
   resultFileName,
 } from '../lib/format.ts'
+import { AmountsLedger } from './AmountsLedger.tsx'
+import { DatesTimeline } from './DatesTimeline.tsx'
+import { CheckIcon, CopyIcon, DownloadIcon } from './Icons.tsx'
 import { JsonPreview } from './JsonPreview.tsx'
+import { Notes } from './Notes.tsx'
 
 interface Props {
   result: AnalysisResult
@@ -16,196 +21,204 @@ interface Props {
 }
 
 function Empty() {
-  return <p className="muted">Brak w dokumencie.</p>
+  return <p className="empty-value">Brak w dokumencie.</p>
+}
+
+function pagesList(pages: number[]): string {
+  return `str. ${pages.join(', ')}`
 }
 
 export function ResultView({ result, durationMs }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   useEffect(() => headingRef.current?.focus(), [result])
+  const [copied, setCopied] = useState(false)
 
-  const { document: doc } = result
+  const { document: doc, meta } = result
   const lang = doc.language
-  const unverified = result.amounts.filter((a) => !a.verified).length
+  const { organizations, people } = result.entities
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(result, null, 2))
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   return (
-    <article className="result" aria-labelledby="result-title">
-      <header className="card result-header">
-        <p className="eyebrow">
-          {DOCUMENT_TYPE_LABELS[doc.type] ?? doc.type} · {doc.pages}{' '}
-          {doc.pages === 1 ? 'strona' : doc.pages < 5 ? 'strony' : 'stron'} · język:{' '}
-          {doc.language.toUpperCase()}
-          {doc.date ? ` · ${formatDate(doc.date, lang)}` : ''}
-        </p>
-        <h2 id="result-title" ref={headingRef} tabIndex={-1}>
+    <article className="sheet result" aria-labelledby="result-title">
+      <header className="sheet-head">
+        <h2 id="result-title" ref={headingRef} tabIndex={-1} lang={lang}>
           {doc.title ?? doc.fileName}
         </h2>
-        <p className="muted small">
-          {doc.fileName} · analiza w {formatSeconds(durationMs)} · model {result.meta.model}
-        </p>
+        <dl className="docmeta">
+          <div>
+            <dt>Typ</dt>
+            <dd>{DOCUMENT_TYPE_LABELS[doc.type] ?? doc.type}</dd>
+          </div>
+          <div>
+            <dt>Data</dt>
+            <dd>{doc.date ? formatDate(doc.date, 'pl') : 'brak'}</dd>
+          </div>
+          <div>
+            <dt>Objętość</dt>
+            <dd>
+              {doc.pages} {plural(doc.pages, 'strona', 'strony', 'stron')}
+            </dd>
+          </div>
+          <div>
+            <dt>Język</dt>
+            <dd>{languageName(lang)}</dd>
+          </div>
+          {meta.hiddenTextPages.length > 0 && (
+            <div className="is-alert">
+              <dt>Ukryty tekst</dt>
+              <dd>{pagesList(meta.hiddenTextPages)}, pominięty</dd>
+            </div>
+          )}
+          {meta.ocrPages.length > 0 && (
+            <div>
+              <dt>Odczyt ze skanu</dt>
+              <dd>{pagesList(meta.ocrPages)}</dd>
+            </div>
+          )}
+          <div className="wide">
+            <dt>Plik</dt>
+            <dd className="filename">{doc.fileName}</dd>
+          </div>
+          <div className="wide">
+            <dt>Analiza</dt>
+            <dd>
+              {formatSeconds(durationMs)}, model {meta.model}
+            </dd>
+          </div>
+        </dl>
         <div className="actions">
           <button
             type="button"
             className="button button-primary"
             onClick={() => downloadJson(result, resultFileName(doc.fileName))}
           >
+            <DownloadIcon />
             Pobierz JSON
           </button>
+          <button type="button" className="button" onClick={copy}>
+            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? 'Skopiowano' : 'Kopiuj JSON'}
+          </button>
+          <span className="visually-hidden" aria-live="polite">
+            {copied ? 'Skopiowano JSON do schowka' : ''}
+          </span>
         </div>
       </header>
 
-      {result.warnings.length > 0 && (
-        <section className="card warnings" aria-labelledby="warnings-title">
-          <h3 id="warnings-title" className="card-title">
-            Uwagi ({result.warnings.length})
-          </h3>
-          <ul>
-            {result.warnings.map((w) => (
-              <li key={w}>{w}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {result.warnings.length > 0 && <Notes warnings={result.warnings} headingId="notes-title" />}
 
-      <section className="card" aria-labelledby="summary-title">
-        <h3 id="summary-title" className="card-title">
+      <section className="row" aria-labelledby="summary-title">
+        <h3 id="summary-title" className="row-label">
           Podsumowanie
         </h3>
-        <p className="summary" lang={lang}>
-          {result.summary}
-        </p>
-        <h4 className="subhead">Najważniejsze punkty</h4>
-        <ul className="key-points" lang={lang}>
-          {result.keyPoints.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="card" aria-labelledby="amounts-title">
-        <h3 id="amounts-title" className="card-title">
-          Kwoty ({result.amounts.length})
-        </h3>
-        {result.amounts.length === 0 ? (
-          <Empty />
-        ) : (
-          <>
-            <div className="table-wrap" tabIndex={0} role="region" aria-labelledby="amounts-title">
-              <table className="stack-table">
-                <thead>
-                  <tr>
-                    <th scope="col" className="num">
-                      Kwota
-                    </th>
-                    <th scope="col">Waluta</th>
-                    <th scope="col">Kontekst</th>
-                  </tr>
-                </thead>
-                <tbody lang={lang}>
-                  {result.amounts.map((a) => (
-                    <tr key={`${a.value}-${a.currency}-${a.context}`}>
-                      <td className="num">
-                        {formatAmount(a.value, a.currency, lang)}
-                        {!a.verified && (
-                          <span className="badge" title="Wartości nie ma w warstwie tekstowej PDF">
-                            sprawdź
-                          </span>
-                        )}
-                      </td>
-                      <td>{a.currency}</td>
-                      <td className="ctx">{a.context}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {unverified > 0 && (
-              <p className="muted small">
-                „sprawdź”: wartości nie ma w warstwie tekstowej PDF (np. pochodzi ze skanu). Warto
-                porównać ją z oryginałem.
-              </p>
-            )}
-          </>
-        )}
-      </section>
-
-      <section className="card" aria-labelledby="dates-title">
-        <h3 id="dates-title" className="card-title">
-          Daty ({result.dates.length})
-        </h3>
-        {result.dates.length === 0 ? (
-          <Empty />
-        ) : (
-          <div className="table-wrap" tabIndex={0} role="region" aria-labelledby="dates-title">
-            <table className="stack-table">
-              <thead>
-                <tr>
-                  <th scope="col">Data</th>
-                  <th scope="col">Kontekst</th>
-                </tr>
-              </thead>
-              <tbody lang={lang}>
-                {result.dates.map((d) => (
-                  <tr key={`${d.date}-${d.context}`}>
-                    <td className="nowrap">
-                      <time dateTime={d.date}>{formatDate(d.date, lang)}</time>
-                    </td>
-                    <td className="ctx">{d.context}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <div className="grid-2">
-        <section className="card" aria-labelledby="orgs-title">
-          <h3 id="orgs-title" className="card-title">
-            Organizacje
-          </h3>
-          {result.entities.organizations.length === 0 ? (
-            <Empty />
-          ) : (
-            <ul className="plain-list">
-              {result.entities.organizations.map((o) => (
-                <li key={o}>{o}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-        <section className="card" aria-labelledby="people-title">
-          <h3 id="people-title" className="card-title">
-            Osoby
-          </h3>
-          {result.entities.people.length === 0 ? (
-            <Empty />
-          ) : (
-            <ul className="plain-list">
-              {result.entities.people.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-
-      <section className="card" aria-labelledby="keywords-title">
-        <h3 id="keywords-title" className="card-title">
-          Słowa kluczowe
-        </h3>
-        {result.keywords.length === 0 ? (
-          <Empty />
-        ) : (
-          <ul className="chips" lang={lang}>
-            {result.keywords.map((k) => (
-              <li key={k}>{k}</li>
+        <div className="row-body">
+          <p className="summary" lang={lang}>
+            {result.summary}
+          </p>
+          <h4 className="subhead">Najważniejsze punkty</h4>
+          <ul className="key-points" lang={lang}>
+            {result.keyPoints.map((p) => (
+              <li key={p}>{p}</li>
             ))}
           </ul>
-        )}
+        </div>
       </section>
 
-      <section className="card">
-        <JsonPreview data={result} />
+      <section className="row" aria-labelledby="amounts-title">
+        <h3 id="amounts-title" className="row-label">
+          Kwoty <span className="count">{result.amounts.length}</span>
+        </h3>
+        <div className="row-body">
+          {result.amounts.length === 0 ? (
+            <Empty />
+          ) : (
+            <AmountsLedger amounts={result.amounts} lang={lang} headingId="amounts-title" />
+          )}
+        </div>
+      </section>
+
+      <section className="row" aria-labelledby="dates-title">
+        <h3 id="dates-title" className="row-label">
+          Daty <span className="count">{result.dates.length}</span>
+        </h3>
+        <div className="row-body">
+          {result.dates.length === 0 ? (
+            <Empty />
+          ) : (
+            <DatesTimeline dates={result.dates} lang={lang} />
+          )}
+        </div>
+      </section>
+
+      <section className="row" aria-labelledby="entities-title">
+        <h3 id="entities-title" className="row-label">
+          Strony i osoby
+        </h3>
+        <div className="row-body entities">
+          <div>
+            <h4 className="subhead">
+              Organizacje <span className="count">{organizations.length}</span>
+            </h4>
+            {organizations.length === 0 ? (
+              <Empty />
+            ) : (
+              <ul className="names">
+                {organizations.map((o) => (
+                  <li key={o}>{o}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <h4 className="subhead">
+              Osoby <span className="count">{people.length}</span>
+            </h4>
+            {people.length === 0 ? (
+              <Empty />
+            ) : (
+              <ul className={`names${people.length > 5 ? ' names-cols' : ''}`}>
+                {people.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="row" aria-labelledby="keywords-title">
+        <h3 id="keywords-title" className="row-label">
+          Słowa kluczowe
+        </h3>
+        <div className="row-body">
+          {result.keywords.length === 0 ? (
+            <Empty />
+          ) : (
+            <ul className="keywords" lang={lang}>
+              {result.keywords.map((k) => (
+                <li key={k}>{k}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+
+      <section className="row" aria-labelledby="json-title">
+        <h3 id="json-title" className="row-label">
+          JSON
+        </h3>
+        <div className="row-body">
+          <JsonPreview data={result} />
+        </div>
       </section>
     </article>
   )

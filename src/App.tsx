@@ -3,6 +3,7 @@ import type { AnalysisResult } from '@shared/schema.ts'
 import { Dropzone } from './components/Dropzone.tsx'
 import { ErrorState } from './components/ErrorState.tsx'
 import { HistoryList } from './components/HistoryList.tsx'
+import { BrandMark } from './components/Icons.tsx'
 import { ProgressView } from './components/ProgressView.tsx'
 import { ResultView } from './components/ResultView.tsx'
 import { AnalysisError, analyzeFile, type Progress } from './lib/analyzeFile.ts'
@@ -78,14 +79,10 @@ export default function App() {
         Przejdź do treści
       </a>
       <header className="site-header">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            PI
-          </span>
-          <div>
-            <h1>PDF Insight</h1>
-            <p className="muted">Podsumowanie i dane z dokumentu PDF w kilka sekund</p>
-          </div>
+        <BrandMark />
+        <div>
+          <h1>PDF Insight</h1>
+          <p>Streszczenie i dane z dokumentu PDF</p>
         </div>
       </header>
 
@@ -96,26 +93,26 @@ export default function App() {
             {state.status === 'done' && 'Analiza zakończona.'}
           </div>
 
-          {state.status !== 'working' && (
-            <section
-              aria-label="Wgrywanie pliku"
-              className={state.status === 'idle' ? 'intro' : ''}
-            >
-              {state.status === 'idle' && (
-                <div className="empty">
-                  <h2>Wgraj dokument, aby zacząć</h2>
-                  <p className="muted">
-                    Dostaniesz streszczenie w 3–5 zdaniach, najważniejsze punkty, kwoty, daty, osoby
-                    i organizacje oraz plik JSON do pobrania.
-                  </p>
-                </div>
-              )}
-              <Dropzone onFile={run} disabled={working} compact={state.status === 'done'} />
-              <p className="privacy small">
-                <strong>Gdzie trafia plik:</strong> PDF jest odczytywany w Twojej przeglądarce. Do
-                analizy wysyłamy tylko jego tekst (a strony bez tekstu jako obrazy) przez nasz
-                serwer do Google Gemini API. Na darmowym planie Google może wykorzystywać przesłane
-                dane do ulepszania swoich usług, więc nie wgrywaj dokumentów z danymi poufnymi.
+          {state.status === 'idle' && (
+            <section className="intake" aria-labelledby="intake-title">
+              <div className="intake-copy">
+                <h2 id="intake-title">Wgraj PDF, a dostaniesz streszczenie i dane w JSON</h2>
+                <p>
+                  Streszczenie w 3–5 zdaniach w języku dokumentu, najważniejsze punkty, kwoty, daty,
+                  osoby i organizacje oraz plik JSON do pobrania.
+                </p>
+              </div>
+              <Dropzone onFile={run} disabled={working} />
+              <PrivacyFlow />
+            </section>
+          )}
+
+          {(state.status === 'done' || state.status === 'error') && (
+            <section aria-label="Wgrywanie pliku" className="intake-compact">
+              <Dropzone onFile={run} disabled={working} compact />
+              <p className="privacy-line">
+                Tekst PDF trafia przez nasz serwer do Google Gemini API. Nie wgrywaj dokumentów z
+                danymi poufnymi.
               </p>
             </section>
           )}
@@ -162,10 +159,36 @@ export default function App() {
         </aside>
       </div>
 
-      <footer className="site-footer muted small">
+      <footer className="site-footer">
         Zadanie rekrutacyjne Vibe Coder ·{' '}
         <a href="https://github.com/Tarczyyn/pdf-insight">kod źródłowy</a>
       </footer>
     </div>
+  )
+}
+
+/** Informacja przed wgraniem: co dzieje się z plikiem na każdym etapie. */
+function PrivacyFlow() {
+  return (
+    <section className="privacy" aria-labelledby="privacy-title">
+      <h3 id="privacy-title">Dokąd trafia plik</h3>
+      <ol>
+        <li>
+          <strong>Twoja przeglądarka</strong>
+          <span>Odczytuje PDF. Sam plik nie jest nigdzie wysyłany.</span>
+        </li>
+        <li>
+          <strong>Nasz serwer</strong>
+          <span>Przekazuje tekst, a strony bez tekstu jako obrazy, do Google Gemini API.</span>
+        </li>
+        <li>
+          <strong>Google Gemini</strong>
+          <span>
+            Na darmowym planie Google może wykorzystywać przesłane dane do ulepszania swoich usług.
+            Nie wgrywaj dokumentów z danymi poufnymi.
+          </span>
+        </li>
+      </ol>
+    </section>
   )
 }

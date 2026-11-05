@@ -1,4 +1,5 @@
-import { useId, useRef, useState, type DragEvent } from 'react'
+import { useId, useRef, useState, type DragEvent, type MouseEvent } from 'react'
+import { FileUpIcon } from './Icons.tsx'
 
 interface Props {
   onFile: (file: File) => void
@@ -22,9 +23,16 @@ export function Dropzone({ onFile, disabled = false, compact = false }: Props) {
     pick(e.dataTransfer.files)
   }
 
+  // Klik w dowolne miejsce strefy otwiera wybór pliku; z klawiatury działa przycisk.
+  const onZoneClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (disabled || (e.target as HTMLElement).closest('button')) return
+    inputRef.current?.click()
+  }
+
   return (
     <div
       className={`dropzone${dragging ? ' is-dragging' : ''}${compact ? ' is-compact' : ''}`}
+      onClick={onZoneClick}
       onDragOver={(e) => {
         e.preventDefault()
         if (!disabled) setDragging(true)
@@ -34,22 +42,17 @@ export function Dropzone({ onFile, disabled = false, compact = false }: Props) {
       }}
       onDrop={onDrop}
     >
-      <svg className="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5 M12 18v-6 M9.5 14.5 12 12l2.5 2.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      {!compact && <FileUpIcon className="dropzone-icon" width="28" height="28" />}
       <p className="dropzone-title">
-        {compact ? 'Przeciągnij kolejny PDF albo' : 'Przeciągnij plik PDF tutaj albo'}
+        {dragging
+          ? 'Upuść plik, aby go przeanalizować'
+          : compact
+            ? 'Przeciągnij kolejny PDF albo'
+            : 'Przeciągnij tu plik PDF albo'}
       </p>
       <button
         type="button"
-        className="button button-primary"
+        className={`button ${compact ? '' : 'button-primary'}`}
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
         aria-describedby={hintId}

@@ -18,16 +18,14 @@ const timeFormat = new Intl.DateTimeFormat('pl-PL', {
 export function HistoryList({ entries, activeId, onOpen, onClear }: Props) {
   if (entries.length === 0) return null
   return (
-    <section className="card history" aria-labelledby="history-title">
+    <section className="history" aria-labelledby="history-title">
       <div className="history-head">
-        <h2 id="history-title" className="card-title">
-          Ostatnie analizy
-        </h2>
-        <button type="button" className="button button-small button-ghost" onClick={onClear}>
+        <h2 id="history-title">Ostatnie analizy</h2>
+        <button type="button" className="button button-small button-quiet" onClick={onClear}>
           Wyczyść
         </button>
       </div>
-      <p className="muted small">Zapisane tylko w tej przeglądarce.</p>
+      <p className="history-note">Zapisane tylko w tej przeglądarce.</p>
       <ul>
         {entries.map((e) => (
           <li key={e.id}>
@@ -38,9 +36,10 @@ export function HistoryList({ entries, activeId, onOpen, onClear }: Props) {
               onClick={() => onOpen(e)}
             >
               <span className="history-name">{e.result.document.fileName}</span>
-              <span className="muted small">
-                {DOCUMENT_TYPE_LABELS[e.result.document.type] ?? e.result.document.type} ·{' '}
-                {timeFormat.format(new Date(e.savedAt))}
+              <span className="history-meta">
+                {DOCUMENT_TYPE_LABELS[e.result.document.type] ?? e.result.document.type}
+                <span aria-hidden="true"> · </span>
+                <time dateTime={e.savedAt}>{timeFormat.format(new Date(e.savedAt))}</time>
               </span>
             </button>
           </li>
