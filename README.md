@@ -28,7 +28,7 @@ Przeglądarka (GitHub Pages)                  Supabase Edge Function "analyze"  
 | **OCR przez model multimodalny**                                          | Strona bez warstwy tekstowej jest renderowana do JPEG i idzie w tym samym wywołaniu co tekst. Bez tesseract.js (ok. 10 MB danych języka) i bez dodatkowego czasu. Maks. 5 takich stron na dokument.                                                                                                                                                                                                                                                    |
 | **Weryfikacja kwot**                                                      | Serwer sprawdza, czy każda kwota z odpowiedzi występuje w warstwie tekstowej (obsługuje zapisy „184 500,00”, „4,2 mln”, liczby złamane między liniami). Kwoty, których tam nie ma (np. ze skanu), mają `verified: false` i znaczek „sprawdź” w UI.                                                                                                                                                                                                     |
 | **Jeden schemat Zod** dla serwera i frontu                                | `supabase/functions/_shared/schema.ts`. Serwer waliduje odpowiedź modelu i robi 1 ponowną próbę z listą błędów; frontend waliduje wynik jeszcze raz przed wyświetleniem. Test pilnuje, żeby JSON Schema dla modelu nie rozjechał się z Zod.                                                                                                                                                                                                            |
-| **Pola i model wybrane przez serwer**                                     | `fileName` i `pages` dokłada serwer, nie model. Przy dowolnym błędzie HTTP dostawcy (limit, przeciążenie, odrzucony parametr) lub przekroczeniu czasu (25 s) funkcja próbuje kolejnego modelu z listy (`gemini-3.6-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash-lite`, …); każdy ma osobny limit darmowego planu, a cała analiza ma budżet 55 s.                                                                                                 |
+| **Pola i model wybrane przez serwer**                                     | `fileName` i `pages` dokłada serwer, nie model. Przy dowolnym błędzie HTTP dostawcy (limit, przeciążenie, odrzucony parametr) lub przekroczeniu czasu (25 s) funkcja przechodzi z `gemini-3.6-flash` na `gemini-3.8-flash` (używane są tylko te dwa najnowsze modele Flash); każdy ma osobny limit darmowego planu, a cała analiza ma budżet 55 s.                                                                                                     |
 | **Funkcja bez JWT** (`verify_jwt = false`)                                | We froncie nie ma żadnego klucza, nawet publicznego klucza anon. Dostęp chronią: limit 6 żądań/min i 60/dzień per IP (hash IP w Postgresie) oraz 300/dzień dla całego demo, limit rozmiaru żądania i lista dozwolonych domen (chroni przed wywołaniami z obcych stron w przeglądarce, nie przed klientem spoza przeglądarki). Gdy baza limitera nie odpowiada, analiza działa dalej (fail-open), żeby awaria pomocniczego elementu nie wyłączała demo. |
 
 ### Pola dodane do schematu
@@ -71,12 +71,12 @@ Polecenia: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
 
 ### Zmienne środowiskowe
 
-| Gdzie                 | Nazwa             | Opis                                                              |
-| --------------------- | ----------------- | ----------------------------------------------------------------- |
-| Frontend (build)      | `VITE_API_URL`    | Adres funkcji `analyze`. W GitHub Actions: zmienna repozytorium.  |
-| Funkcja (secrets)     | `GEMINI_API_KEY`  | Klucz Gemini API. Ustawiany `supabase secrets set`, nigdy w repo. |
-| Funkcja (opcjonalnie) | `GEMINI_MODELS`   | Lista modeli po przecinku, w kolejności prób.                     |
-| Funkcja (opcjonalnie) | `ALLOWED_ORIGINS` | Dozwolone domeny, po przecinku.                                   |
+| Gdzie                 | Nazwa             | Opis                                                                              |
+| --------------------- | ----------------- | --------------------------------------------------------------------------------- |
+| Frontend (build)      | `VITE_API_URL`    | Adres funkcji `analyze`. W GitHub Actions: zmienna repozytorium.                  |
+| Funkcja (secrets)     | `GEMINI_API_KEY`  | Klucz Gemini API. Ustawiany `supabase secrets set`, nigdy w repo.                 |
+| Funkcja (opcjonalnie) | `GEMINI_MODELS`   | Kolejność prób, np. `gemini-3.8-flash,gemini-3.6-flash`. Inne modele są pomijane. |
+| Funkcja (opcjonalnie) | `ALLOWED_ORIGINS` | Dozwolone domeny, po przecinku.                                                   |
 
 ## Deploy
 
@@ -98,6 +98,6 @@ Polecenia: `npm run lint`, `npm run format:check`, `npm test`, `npm run build`.
 - **OCR** obejmuje maks. 5 stron bez warstwy tekstowej; dane ze skanów są oznaczone jako niezweryfikowane.
 - **Wykrywanie ukrytego tekstu** działa dla pierwszych 60 stron (dalej tylko kontrola położenia poza stroną). Nie wykrywa tekstu przykrytego innym obiektem, jeśli obiekt ma kontrast.
 - **Karta w tle:** przeglądarki spowalniają timery w nieaktywnych kartach, więc odczyt PDF w karcie w tle trwa dłużej. Interfejs o tym informuje.
-- **Darmowe modele bywają przeciążone** (HTTP 503) albo wolne. Funkcja przechodzi kolejno przez 5 modeli w łącznym budżecie 55 s.
+- **Darmowe modele bywają przeciążone** (HTTP 503) albo wolne. Funkcja próbuje `gemini-3.6-flash`, potem `gemini-3.8-flash`, w łącznym budżecie 55 s.
 - **Długie dokumenty** (powyżej 400 tys. znaków) są odrzucane.
 - Podsumowanie i dane pochodzą z modelu językowego; aplikacja ogranicza zmyślenia (walidacja, weryfikacja kwot), ale ich nie wyklucza.

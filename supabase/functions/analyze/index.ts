@@ -14,13 +14,8 @@ import { extractNumbers, isValueInText } from '../_shared/numbers.ts'
 import { buildDocumentText, RESPONSE_JSON_SCHEMA, SYSTEM_PROMPT } from './prompt.ts'
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
-const DEFAULT_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-3.5-flash-lite',
-  'gemini-3.8-flash',
-]
+// Tylko najnowsze modele Flash; GEMINI_MODELS może zmienić kolejność, ale nie dodać innych.
+const ALLOWED_MODELS = ['gemini-3.6-flash', 'gemini-3.8-flash']
 const DEFAULT_ORIGINS = [
   'https://tarczyyn.github.io',
   'http://localhost:5173',
@@ -51,11 +46,11 @@ const env = (name: string): string | undefined => Deno.env.get(name)?.trim() || 
 const allowedOrigins = new Set(
   (env('ALLOWED_ORIGINS')?.split(',') ?? DEFAULT_ORIGINS).map((o) => o.trim()).filter(Boolean),
 )
-const models =
-  env('GEMINI_MODELS')
-    ?.split(',')
-    .map((m) => m.trim())
-    .filter(Boolean) ?? DEFAULT_MODELS
+const configuredModels = env('GEMINI_MODELS')
+  ?.split(',')
+  .map((m) => m.trim())
+  .filter((m) => ALLOWED_MODELS.includes(m))
+const models = configuredModels?.length ? configuredModels : ALLOWED_MODELS
 
 class HttpError extends Error {
   constructor(
