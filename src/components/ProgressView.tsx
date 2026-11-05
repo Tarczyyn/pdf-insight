@@ -61,6 +61,9 @@ export function ProgressView({ fileName, progress, startedAt, onCancel }: Props)
       <div className="progress-bar" aria-hidden="true">
         <div className={`progress-bar-fill ${reading ? 'is-reading' : 'is-analyzing'}`} />
       </div>
+      <p className="muted small">
+        Zostaw tę kartę otwartą: przeglądarka spowalnia karty działające w tle.
+      </p>
       <button type="button" className="button button-ghost" onClick={onCancel}>
         Anuluj
       </button>
